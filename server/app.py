@@ -12,13 +12,14 @@ from models import User, Task
 
 app = create_app()
 
-# ---------------- REGISTER ----------------
+
+# ---------------- SIGN UP ----------------
 @app.route("/signup", methods=["POST"])
 def signup():
     data = request.get_json()
 
     if not data:
-        return jsonify({"error": "No data received"}), 400
+        return jsonify({"error": "No data sent"}), 400
 
     username = data.get("username")
     password = data.get("password")
@@ -26,89 +27,120 @@ def signup():
     if not username or not password:
         return jsonify({"error": "Username and password required"}), 400
 
-    if User.query.filter_by(username=username).first():
+    existing_user = User.query.filter_by(username=username).first()
+
+    if existing_user:
         return jsonify({"error": "Username already exists"}), 400
 
-    user = User(username=username)
-    user.set_password(password)
+    new_user = User(username=username)
+    new_user.set_password(password)
 
-    db.session.add(user)
+    db.session.add(new_user)
     db.session.commit()
 
-    return jsonify({"message": "User created successfully"}), 201
+    return jsonify({
+        "message": "Signup successful",
+        "id": new_user.id,
+        "username": new_user.username
+    }), 201
 
 
-# ---------------- LOGIN ----------------
+# ---------------- LOG IN ----------------
 @app.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
 
     if not data:
-        return jsonify({"error": "No data received"}), 400
+        return jsonify({"error": "No data sent"}), 400
 
     username = data.get("username")
     password = data.get("password")
 
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+
     user = User.query.filter_by(username=username).first()
 
-    if user and user.check_password(password):
-        token = create_access_token(identity=user.id)
-        return jsonify(access_token=token), 200
+    if not user:
+        return jsonify({"error": "User not found"}), 401
 
-    return jsonify({"error": "Invalid credentials"}), 401
+    if not user.check_password(password):
+        return jsonify({"error": "Wrong password"}), 401
+
+    access_token = create_access_token(identity=user.id)
+
+    return jsonify({
+        "message": "Login successful",
+        "access_token": access_token,
+        "user": {
+            "id": user.id,
+            "username": user.username
+        }
+    }), 200
+
+
+# ---------------- LOG OUT ----------------
+@app.route("/logout", methods=["DELETE", "POST"])
+def logout():
+    return jsonify({
+        "message": "Logout successful"
+    }), 200
+
+
+# ---------------- TEST AUTH BUTTON ----------------
+@app.route("/authorized", methods=["GET"])
+@jwt_required()
+def authorized():
+    current_user_id = get_jwt_identity()
+
+    user = User.query.get(current_user_id)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    return jsonify({
+        "message": f"You are logged in as {user.username}"
+    }), 200
 
 
 # ---------------- GET TASKS ----------------
 @app.route("/tasks", methods=["GET"])
 @jwt_required()
 def get_tasks():
-    user_id = get_jwt_identity()
+    current_user_id = get_jwt_identity()
 
-    page = request.args.get("page", 1, type=int)
-    per_page = 5
+    tasks = Task.query.filter_by(user_id=current_user_id).all()
 
-    tasks = Task.query.filter_by(user_id=user_id).paginate(
-        page=page,
-        per_page=per_page,
-        error_out=False
-    )
+    tasks_list = []
 
-    results = []
-
-    for task in tasks.items:
-        results.append({
+    for task in tasks:
+        tasks_list.append({
             "id": task.id,
             "title": task.title,
             "description": task.description,
             "completed": task.completed
         })
 
-    return jsonify({
-        "tasks": results,
-        "page": page,
-        "pages": tasks.pages
-    })
+    return jsonify(tasks_list), 200
 
 
 # ---------------- CREATE TASK ----------------
 @app.route("/tasks", methods=["POST"])
 @jwt_required()
 def create_task():
-    user_id = get_jwt_identity()
+    current_user_id = get_jwt_identity()
     data = request.get_json()
 
-    if not data:
-        return jsonify({"error": "No data received"}), 400
-
     title = data.get("title")
+    description = data.get("description", "")
 
     if not title:
         return jsonify({"error": "Title required"}), 400
 
     task = Task(
         title=title,
-        description=data.get("description", ""),
-        user_id=user_id
+        description=description,
+        user_id=current_user_id
     )
 
     db.session.add(task)
@@ -121,17 +153,14 @@ def create_task():
 @app.route("/tasks/<int:id>", methods=["PATCH"])
 @jwt_required()
 def update_task(id):
-    user_id = get_jwt_identity()
+    current_user_id = get_jwt_identity()
 
-    task = Task.query.filter_by(id=id, user_id=user_id).first()
+    task = Task.query.filter_by(id=id, user_id=current_user_id).first()
 
     if not task:
         return jsonify({"error": "Task not found"}), 404
 
     data = request.get_json()
-
-    if not data:
-        return jsonify({"error": "No data received"}), 400
 
     task.title = data.get("title", task.title)
     task.description = data.get("description", task.description)
@@ -146,9 +175,9 @@ def update_task(id):
 @app.route("/tasks/<int:id>", methods=["DELETE"])
 @jwt_required()
 def delete_task(id):
-    user_id = get_jwt_identity()
+    current_user_id = get_jwt_identity()
 
-    task = Task.query.filter_by(id=id, user_id=user_id).first()
+    task = Task.query.filter_by(id=id, user_id=current_user_id).first()
 
     if not task:
         return jsonify({"error": "Task not found"}), 404
@@ -160,4 +189,4 @@ def delete_task(id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(port=5555, debug=True)
